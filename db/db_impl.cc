@@ -44,6 +44,9 @@
 #include <chrono>
 #include <ctime>
 
+#include "log/global_statistic.h"
+#include "log/my_log.h"
+
 using namespace std;
 
 namespace leveldb {
@@ -253,7 +256,17 @@ DBImpl::~DBImpl() {
     if(thpool && NUM_READ_THREADS)
         thpool_destroy(thpool);
 }
+////
+bool DBImpl::HaveBalancedDistribution(){
+    if(versions_->NeedsCompaction()) {
+        return false;
+    }
+    else{
+        return true;
+    }
+}
 
+////
 Status DBImpl::NewDB() {
     VersionEdit new_db;
     new_db.SetComparatorName(user_comparator()->Name());
@@ -1227,6 +1240,11 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
     }
 
     mutex_.Lock();
+
+#ifdef STATISTIC_OPEN
+    uint64_t start_time = get_now_micros() - stats.micros - global_stats.start_time;
+    RECORD_INFO(3,"%ld,%.2f,%.2f,%.5f,%.3f,%d\n",++global_stats.compaction_num, 1.0*stats.bytes_read/1048576.0,1.0*stats.bytes_written/1048576.0,1.0*stats.micros*1e-6,1.0*start_time*1e-6,compact->compaction->level() == 0);
+#endif
     stats_[compact->compaction->level() + 1].Add(stats);
 
     if (status.ok()) {

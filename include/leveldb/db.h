@@ -43,6 +43,9 @@ struct Range {
 // any external synchronization.
 class DB {
  public:
+////
+   virtual bool HaveBalancedDistribution() = 0;
+////
   // Open the database with the specified "name".
   // Stores a pointer to a heap-allocated database in *dbptr and returns
   // OK on success.
