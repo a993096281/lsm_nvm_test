@@ -47,7 +47,7 @@ RUN_ONE_TEST() {
     cmd="$bench_file_path $const_params >>out.out 2>&1"
     echo $cmd >out.out
     echo $cmd
-    #eval $cmd
+    eval $cmd
 }
 
 CLEAN_CACHE() {
