@@ -7,3 +7,12 @@ build_config.mk
 *_test
 db_bench
 leveldbutil
+.vscode
+*.log
+*.out
+out-static
+out-shared
+OP_DATA
+OP_TIME.csv
+compaction.csv
+result

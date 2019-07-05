@@ -18,6 +18,11 @@
 #include "util/random.h"
 #include "util/testutil.h"
 
+#include <unistd.h>
+
+#include "log/global_statistic.h"
+#include "log/my_log.h"
+
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
 //      fillseq       -- write N values in sequential key order in async mode
@@ -42,22 +47,24 @@
 //      sstables    -- Print sstable info
 //      heapprofile -- Dump a heap profile (if supported by this port)
 static const char* FLAGS_benchmarks =
-        "fillseq,"
-        "fillsync,"
-        "fillrandom,"
-        "overwrite,"
-        "readrandom,"
-        "readseq,"
-        "readrandom,"
-        "readseq,"
-        "readreverse,"
-        "fill100K,"
-        //"crc32c,"
-        //    "snappycomp,"
-        //    "snappyuncomp,"
-        //    "acquireload,"
-        ;
-
+    "fillseq,"
+    "fillsync,"
+    "fillrandom,"
+    "overwrite,"
+    "readrandom,"
+    "readrandom,"  // Extra run to allow previous compactions to quiesce
+    "readseq,"
+    "readreverse,"
+    "compact,"
+    "readrandom,"
+    "readseq,"
+    "readreverse,"
+    "fill100K,"
+    "crc32c,"
+    "snappycomp,"
+    "snappyuncomp,"
+    "acquireload,"
+    ;
 
 // Number of key/values to place in database
 static int FLAGS_num = 1000000;
@@ -266,11 +273,11 @@ class Stats {
     }
     AppendWithSpace(&extra, message_);
 
-    fprintf(stdout, "%-12s : %11.3f micros/op;%s%s\n",
+    fprintf(stdout, "%-12s : %11.3f micros/op;%s%s %.2f s\n",
             name.ToString().c_str(),
             seconds_ * 1e6 / done_,
             (extra.empty() ? "" : " "),
-            extra.c_str());
+            extra.c_str(),seconds_);
     if (FLAGS_histogram) {
       fprintf(stdout, "Microseconds per op:\n%s\n", hist_.ToString().c_str());
     }
@@ -474,14 +481,12 @@ class Benchmark {
         method = &Benchmark::WriteRandom;
       } else if (name == Slice("fillsync")) {
         fresh_db = true;
-        /*NVMs are fast; increase num keys*/
-        //num_ /= 1000;
-        num_ /= 10;
+        num_ /= 1000;
         write_options_.sync = true;
         method = &Benchmark::WriteRandom;
       } else if (name == Slice("fill100K")) {
         fresh_db = true;
-        num_ /= 10;
+        num_ /= 1000;
         value_size_ = 100 * 1000;
         method = &Benchmark::WriteRandom;
       } else if (name == Slice("readseq")) {
@@ -518,6 +523,10 @@ class Benchmark {
         method = &Benchmark::SnappyUncompress;
       } else if (name == Slice("heapprofile")) {
         HeapProfile();
+      }  else if(name == "wait") {
+        WaitBalanceLevel();
+      } else if(name == "clean_cache") {
+        CleanCache();
       } else if (name == Slice("stats")) {
         PrintStats("leveldb.stats");
       } else if (name == Slice("sstables")) {
@@ -752,6 +761,14 @@ class Benchmark {
     WriteBatch batch;
     Status s;
     int64_t bytes = 0;
+    int64_t t_last_num = 0;
+    int64_t t_last_bytes = 0;
+    double t_start_time = Env::Default()->NowMicros();
+    double t_last_time = t_start_time;
+    double t_cur_time;
+#ifdef STATISTIC_OPEN
+        global_stats.start_time = t_start_time;
+#endif
     for (int i = 0; i < num_; i += entries_per_batch_) {
       batch.Clear();
       for (int j = 0; j < entries_per_batch_; j++) {
@@ -767,6 +784,28 @@ class Benchmark {
         fprintf(stderr, "put error: %s\n", s.ToString().c_str());
         exit(1);
       }
+#ifdef STATISTIC_OPEN
+      t_cur_time = Env::Default()->NowMicros();
+      if (t_cur_time - t_last_time > 10*1e6) {
+        double use_time = (t_cur_time - t_last_time)*1e-6;
+        int64_t ebytes = bytes - t_last_bytes;
+        double now = (t_cur_time - t_start_time)*1e-6;
+        int64_t written_num = i - t_last_num;
+
+        RECORD_INFO(1,"now=,%.2f,s speed=,%.2f,MB/s,%.1f,iops size=,%.1f,MB average=,%.2f,MB/s,%.1f,iops compaction:,%ld\n",
+          now,(1.0*ebytes/1048576.0)/use_time,1.0*written_num/use_time,1.0*bytes/1048576.0,(1.0*bytes/1048576.0)/now,1.0*i/now,global_stats.compaction_num);
+
+        t_last_time = t_cur_time;
+        t_last_bytes = bytes;
+        t_last_num = i;
+
+        std::string stats;
+        //db_with_cfh->db->GetProperty("rocksdb.levelstats", &stats);
+        db_->GetProperty("leveldb.stats",&stats);
+        RECORD_INFO(2,"now= %.2f s\n%s\n",now,stats.c_str());
+      }
+
+#endif
     }
     thread->stats.AddBytes(bytes);
   }
@@ -920,7 +959,22 @@ class Benchmark {
   void Compact(ThreadState* thread) {
     db_->CompactRange(NULL, NULL);
   }
-
+  void WaitBalanceLevel(){
+    if(db_ == nullptr) return;
+    uint64_t sleep_time = 0;
+    while(!db_->HaveBalancedDistribution()){
+        sleep(10);
+        sleep_time += 10;
+    }
+    fprintf(stdout,"Wait balance:%lu s\n",sleep_time);
+    }
+  void CleanCache() {
+    system("sync");
+    system("echo 3 > /proc/sys/vm/drop_caches");
+    sleep(5);
+    system("free -h");
+    printf("clean cache ok!\n");
+  }
   void PrintStats(const char* key) {
     std::string stats;
     if (!db_->GetProperty(key, &stats)) {
@@ -1015,6 +1069,7 @@ int main(int argc, char** argv) {
   }
 
   leveldb::Benchmark benchmark;
+  leveldb::init_log_file();
   benchmark.Run();
   return 0;
 }

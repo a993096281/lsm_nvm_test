@@ -27,7 +27,9 @@ class DBImpl : public DB {
  public:
   DBImpl(const Options& options, const std::string& dbname);
   virtual ~DBImpl();
-
+////
+virtual bool HaveBalancedDistribution();
+////
   // Implementations of the DB interface
   virtual Status Put(const WriteOptions&, const Slice& key, const Slice& value);
   virtual Status Delete(const WriteOptions&, const Slice& key);

@@ -21,7 +21,7 @@ $(shell CC="$(CC)" CXX="$(CXX)" TARGET_OS="$(TARGET_OS)" \
 include build_config.mk
 
 TESTS = \
-	db/autocompact_test \
+	#db/autocompact_test \
 	db/c_test \
 	db/corruption_test \
 	db/db_test \
@@ -139,7 +139,8 @@ $(SHARED_OUTDIR)/$(SHARED_LIB3): $(SHARED_LIBOBJECTS)
 
 endif  # PLATFORM_SHARED_EXT
 
-all: $(SHARED_LIBS) $(SHARED_PROGRAMS) $(STATIC_OUTDIR)/libleveldb.a $(STATIC_OUTDIR)/libmemenv.a $(STATIC_PROGRAMS)
+#all: $(SHARED_LIBS) $(SHARED_PROGRAMS) $(STATIC_OUTDIR)/libleveldb.a $(STATIC_OUTDIR)/libmemenv.a $(STATIC_PROGRAMS)
+all:$(STATIC_OUTDIR)/libleveldb.a $(STATIC_PROGRAMS)
 
 check: $(STATIC_PROGRAMS)
 	for t in $(notdir $(TESTS)); do echo "***** Running $$t"; $(STATIC_OUTDIR)/$$t || exit 1; done
@@ -167,12 +168,16 @@ $(STATIC_OUTDIR)/table: | $(STATIC_OUTDIR)
 $(STATIC_OUTDIR)/util: | $(STATIC_OUTDIR)
 	mkdir $@
 
+$(STATIC_OUTDIR)/log: | $(STATIC_OUTDIR)
+	mkdir $@
+
 .PHONY: STATIC_OBJDIRS
 STATIC_OBJDIRS: \
 	$(STATIC_OUTDIR)/db \
 	$(STATIC_OUTDIR)/port \
 	$(STATIC_OUTDIR)/table \
 	$(STATIC_OUTDIR)/util \
+	$(STATIC_OUTDIR)/log \
 	$(STATIC_OUTDIR)/helpers/memenv
 
 $(SHARED_OUTDIR):

@@ -33,6 +33,9 @@
 #include "util/logging.h"
 #include "util/mutexlock.h"
 
+#include "log/global_statistic.h"
+#include "log/my_log.h"
+
 namespace leveldb {
 
 const int kNumNonTableCacheFiles = 10;
@@ -173,7 +176,17 @@ DBImpl::~DBImpl() {
     delete options_.block_cache;
   }
 }
+////
+bool DBImpl::HaveBalancedDistribution(){
+    if(versions_->NeedsCompaction()) {
+        return false;
+    }
+    else{
+        return true;
+    }
+}
 
+////
 Status DBImpl::NewDB() {
   VersionEdit new_db;
   new_db.SetComparatorName(user_comparator()->Name());
@@ -1031,6 +1044,10 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
   }
 
   mutex_.Lock();
+#ifdef STATISTIC_OPEN
+    uint64_t start_time = get_now_micros() - stats.micros - global_stats.start_time;
+    RECORD_INFO(3,"%ld,%.2f,%.2f,%.5f,%.3f,%d\n",++global_stats.compaction_num, 1.0*stats.bytes_read/1048576.0,1.0*stats.bytes_written/1048576.0,1.0*stats.micros*1e-6,1.0*start_time*1e-6,compact->compaction->level() == 0);
+#endif
   stats_[compact->compaction->level() + 1].Add(stats);
 
   if (status.ok()) {
@@ -1408,6 +1425,11 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
              "--------------------------------------------------\n"
              );
     value->append(buf);
+    int myfiles=0;
+    double mydbsize=0;
+    double mytime=0;
+    double myread=0;
+    double mywrite=0;
     for (int level = 0; level < config::kNumLevels; level++) {
       int files = versions_->NumLevelFiles(level);
       if (stats_[level].micros > 0 || files > 0) {
@@ -1421,8 +1443,22 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
             stats_[level].bytes_read / 1048576.0,
             stats_[level].bytes_written / 1048576.0);
         value->append(buf);
+        myfiles += files;
+        mydbsize += versions_->NumLevelBytes(level) / 1048576.0;
+        mytime += stats_[level].micros / 1e6;
+        myread += stats_[level].bytes_read / 1048576.0;
+        mywrite += stats_[level].bytes_written / 1048576.0;
       }
     }
+    snprintf(
+        buf, sizeof(buf),
+        "all %8d %8.0f %9.0f %8.0f %9.0f",
+        myfiles,
+        mydbsize,
+        mytime,
+        myread,
+        mywrite);
+    value->append(buf);
     return true;
   } else if (in == "sstables") {
     *value = versions_->current()->DebugString();
