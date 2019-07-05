@@ -8,7 +8,8 @@ nvm_buffer_size="8192"  #单位：MB
 
 #bench_benchmarks="fillseq,stats,readseq,readrandom,stats" #"fillrandom,fillseq,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,readseq,readrandom,stats"
-bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
+#bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
+bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,readrandom,stats"
 #bench_benchmarks="fillseq,stats"
 bench_num="8000000"
 bench_readnum="1000000"

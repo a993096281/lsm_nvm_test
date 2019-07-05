@@ -531,6 +531,8 @@ public:
                 HeapProfile();
             } else if(name == "wait") {
                 WaitBalanceLevel();
+            } else if(name == "clean_cache") {
+                CleanCache();
             } else if (name == Slice("stats")) {
                 PrintStats("leveldb.stats");
             } else if (name == Slice("sstables")) {
@@ -1032,7 +1034,13 @@ private:
         }
         fprintf(stdout,"Wait balance:%lu s\n",sleep_time);
     }
-
+    void CleanCache() {
+        system("sync");
+        system("echo 3 > /proc/sys/vm/drop_caches");
+        sleep(5);
+        system("free -h");
+        printf("clean cache ok!\n");
+    }
     void PrintStats(const char* key) {
         std::string stats;
         if (!db_->GetProperty(key, &stats)) {
