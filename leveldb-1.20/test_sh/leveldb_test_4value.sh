@@ -5,7 +5,7 @@ value_array=(4096)
 test_all_size=81920000000   #80G
 
 
-bbench_db_path="/home/lzw/ceshi"
+bbench_db_path="/mnt/ssd/ceshi"
 bench_value="4096"
 write_buffer_size="`expr 64 \* 1024 \* 1024`"  
 
