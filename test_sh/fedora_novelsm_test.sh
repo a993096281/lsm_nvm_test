@@ -45,5 +45,11 @@ cmd="nohup $bench_file_path $const_params >>out.out 2>&1 &"
 echo $cmd >out.out
 fi
 
+if [ -n "$bench_db_path" ];then
+    rm -f $bench_db_path/*
+fi
+if [ -n "$bench_mem_path" ];then
+    rm -f $bench_mem_path/*
+fi
 echo $cmd
 eval $cmd

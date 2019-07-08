@@ -23,6 +23,8 @@
 #include <string>
 #include <istream>
 
+#include <pthread.h>
+
 #include "log/global_statistic.h"
 #include "log/my_log.h"
 
@@ -321,7 +323,50 @@ struct ThreadState {
 };
 
 }  // namespace
+struct SHARE_ARG {
+            double start_time;
+            int64_t done_num;
+            int64_t done_bytes;
+            uint64_t* compaction_num;
+            DB* db;
+            bool shutdown;
+};
+void* RecordData(void* args) {
+        SHARE_ARG* share = (SHARE_ARG *)args;
+        double start_time = share->start_time;
+        int i = 0;
+        int64_t last_num = 0;
+        int64_t last_bytes = 0;
+        double last_time = start_time;
+        while(1){
+            if(share->shutdown) break;
+            sleep(1);
+            i++;
+            if(i == 10) {
+                i=0;
+                int64_t now_num = share->done_num;
+                int64_t now_bytes = share->done_bytes;
+                double cur_time = Env::Default()->NowMicros();
+                double use_time = (cur_time - last_time)*1e-6;
+                int64_t ebytes = now_bytes - last_bytes;
+                double now = (cur_time - start_time)*1e-6;
+                int64_t written_num = now_num - last_num;
 
+                RECORD_INFO(1,"now=,%.2f,s speed=,%.2f,MB/s,%.1f,iops size=,%.1f,MB average=,%.2f,MB/s,%.1f,iops compaction:,%ld\n",
+                    now,(1.0*ebytes/1048576.0)/use_time,1.0*written_num/use_time,1.0*now_bytes/1048576.0,(1.0*now_bytes/1048576.0)/now,1.0*now_num/now,*share->compaction_num);
+
+                last_time = cur_time;
+                last_bytes = now_bytes;
+                last_num = now_num;
+
+                std::string stats;
+                share->db->GetProperty("leveldb.stats",&stats);
+                RECORD_INFO(2,"now= %.2f s\n%s\n",now,stats.c_str());
+
+            }
+        }
+        return NULL;
+    }
 class Benchmark {
 private:
     Cache* cache_;
@@ -772,15 +817,30 @@ private:
         WriteBatch batch;
         Status s;
         int64_t bytes = 0;
-        int64_t t_last_num = 0;
+        double t_start_time = Env::Default()->NowMicros();
+        /* int64_t t_last_num = 0;
         int64_t t_last_bytes = 0;
         double t_start_time = Env::Default()->NowMicros();
         double t_last_time = t_start_time;
-        double t_cur_time;
+        double t_cur_time; */
 #ifdef STATISTIC_OPEN
         global_stats.start_time = t_start_time;
 #endif
+///使用线程每10s记录一次数据
+        
+        struct SHARE_ARG share;
+        share.start_time = t_start_time;
+        share.done_num = 0;
+        share.done_bytes = 0;
+        share.compaction_num = &global_stats.compaction_num;
+        share.db = db_;
+        share.shutdown = false;
 
+        pthread_t pt;
+        int ret = pthread_create(&pt,NULL,RecordData,(void*)&share);
+        if (ret != 0){
+            printf("warn:creat record data pthread fail!%d\n",ret);
+        }
         for (int i = 0; i < num_; i += entries_per_batch_) {
             batch.Clear();
             for (int j = 0; j < entries_per_batch_; j++) {
@@ -790,6 +850,8 @@ private:
                 //_SIMULATE_FAILUREfprintf(stdout, "%s\n", key);
                 batch.Put(key, gen.Generate(value_size_));
                 bytes += value_size_ + strlen(key);
+                share.done_num++;
+                share.done_bytes += value_size_ + strlen(key);
                 thread->stats.FinishedSingleOp();
             }
             s = db_->Write(write_options_, &batch);
@@ -806,7 +868,7 @@ private:
                 exit(0);
             }
 #endif
-#ifdef STATISTIC_OPEN
+/* #ifdef STATISTIC_OPEN
       t_cur_time = Env::Default()->NowMicros();
       if (t_cur_time - t_last_time > 10*1e6) {
         double use_time = (t_cur_time - t_last_time)*1e-6;
@@ -827,9 +889,11 @@ private:
         RECORD_INFO(2,"now= %.2f s\n%s\n",now,stats.c_str());
       }
 
-#endif
+#endif */
         }
         thread->stats.AddBytes(bytes);
+        share.shutdown = true;
+        pthread_join(pt, NULL);
     }
 
     void ReadSequential(ThreadState* thread) {
