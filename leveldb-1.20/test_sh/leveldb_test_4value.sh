@@ -5,14 +5,14 @@ value_array=(4096)
 test_all_size=81920000000   #80G
 
 
-bbench_db_path="/mnt/ssd/ceshi"
+bench_db_path="/mnt/ssd/ceshi"
 bench_value="4096"
 write_buffer_size="`expr 64 \* 1024 \* 1024`"  
 
 #bench_benchmarks="fillseq,stats,readseq,readrandom,stats" #"fillrandom,fillseq,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
-bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,readrandom,stats"
+bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
 #bench_benchmarks="fillseq,stats"
 bench_num="20000000"
 bench_readnum="1000000"

@@ -3,13 +3,13 @@
 bench_db_path="/mnt/ssd/ceshi"
 bench_mem_path="/pmem/nvm"
 bench_value="4096"
-write_buffer_size="64"  #单位：MB
-nvm_buffer_size="8192"  #单位：MB
+write_buffer_size="64"  #unit：MB
+nvm_buffer_size="4096"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_size*1.5*1.5 ? 4G*1.5*1.5=9G
 
 #bench_benchmarks="fillseq,stats,readseq,readrandom,stats" #"fillrandom,fillseq,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
-bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,readrandom,stats"
+bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
 #bench_benchmarks="fillseq,stats"
 bench_num="8000000"
 bench_readnum="1000000"
