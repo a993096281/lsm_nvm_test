@@ -715,7 +715,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
         if (base != NULL) {
             level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
         }
-        edit->AddFile(level, meta.number, meta.file_size,
+        edit->AddFile(0, meta.number, meta.file_size,
                 meta.smallest, meta.largest);
     }
 
