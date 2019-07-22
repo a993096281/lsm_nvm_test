@@ -578,6 +578,8 @@ public:
                 WaitBalanceLevel();
             } else if(name == "clean_cache") {
                 CleanCache();
+            } else if(name == "sleep20s") {
+                Sleep20s();
             } else if (name == Slice("stats")) {
                 PrintStats("leveldb.stats");
             } else if (name == Slice("sstables")) {
@@ -1104,6 +1106,9 @@ private:
         sleep(5);
         system("free -h");
         printf("clean cache ok!\n");
+    }
+    void Sleep20s() {
+        sleep(20);
     }
     void PrintStats(const char* key) {
         std::string stats;

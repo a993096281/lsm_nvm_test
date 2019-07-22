@@ -142,6 +142,26 @@ endif  # PLATFORM_SHARED_EXT
 #all: $(SHARED_LIBS) $(SHARED_PROGRAMS) $(STATIC_OUTDIR)/libleveldb.a $(STATIC_OUTDIR)/libmemenv.a $(STATIC_PROGRAMS)
 all:$(STATIC_OUTDIR)/libleveldb.a $(STATIC_PROGRAMS)
 
+INSTALL_PATH := /usr/local
+
+install-headers:
+	install -d $(INSTALL_PATH)/lib
+	for header_dir in `find "include/leveldb" -type d`; do \
+		install -d $(INSTALL_PATH)/$$header_dir; \
+	done
+	for header in `find "include/leveldb" -type f -name *.h`; do \
+		install -C -m 644 $$header $(INSTALL_PATH)/$$header; \
+	done
+
+install-static: install-headers $(STATIC_OUTDIR)/libleveldb.a
+	install -C -m 755 $(STATIC_OUTDIR)/libleveldb.a $(INSTALL_PATH)/lib
+
+install:install-static
+
+uninstall:
+	rm -rf $(INSTALL_PATH)/include/leveldb \
+	$(INSTALL_PATH)/lib/libleveldb.a \
+
 check: $(STATIC_PROGRAMS)
 	for t in $(notdir $(TESTS)); do echo "***** Running $$t"; $(STATIC_OUTDIR)/$$t || exit 1; done
 
