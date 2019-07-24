@@ -9,10 +9,10 @@ nvm_buffer_size="64"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_si
 #bench_benchmarks="fillseq,stats,readseq,readrandom,stats" #"fillrandom,fillseq,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
-bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
+bench_benchmarks="fillrandom,stats"
 #bench_benchmarks="fillseq,stats"
-bench_num="2000000"
-bench_readnum="100000"
+bench_num="200000"
+bench_readnum="10000"
 
 
 const_params="

@@ -10,6 +10,8 @@
 #include "leveldb/iterator.h"
 #include "leveldb/options.h"
 
+#define NOVELSM
+
 namespace leveldb {
 
 // Update Makefile if you change these
