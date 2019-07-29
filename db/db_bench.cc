@@ -25,6 +25,7 @@
 
 #include <pthread.h>
 
+#include <algorithm>
 #include "log/global_statistic.h"
 #include "log/my_log.h"
 
@@ -69,7 +70,10 @@ static const char* FLAGS_benchmarks =
         //    "acquireload,"
         ;
 
-
+////
+uint64_t *ops_latency = nullptr;
+////
+static bool FLAGS_report_write_latency = false;
 
 // Number of key/values to place in database
 static int FLAGS_num = 100000;
@@ -224,7 +228,51 @@ public:
         finish_ = Env::Default()->NowMicros();
         seconds_ = (finish_ - start_) * 1e-6;
     }
+    void ReportLatency(){
+    if( !FLAGS_report_write_latency || ops_latency == nullptr) return;
+    std::sort(ops_latency, ops_latency + done_);
+    /* for(uint64_t i = 0; i < done_; i++) {
+      printf("%lu\n",ops_latency[i]);
+    }
+    printf("done:%lu\n",done_); */
+    uint64_t cnt = 0;
+    printf("---------write latency---------\n");
+    cnt = 0.1 * done_;
+    printf("latency: 10%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.2 * done_;
+    printf("latency: 20%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.3 * done_;
+    printf("latency: 30%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.4 * done_;
+    printf("latency: 40%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.5 * done_;
+    printf("latency: 50%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.6 * done_;
+    printf("latency: 60%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.7 * done_;
+    printf("latency: 70%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.8 * done_;
+    printf("latency: 80%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.9 * done_;
+    printf("latency: 90%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.99 * done_;
+    printf("latency: 99%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.999 * done_;
+    printf("latency: 99.9%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.9999 * done_;
+    printf("latency: 99.99%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.99999 * done_;
+    printf("latency: 99.999%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    printf("-------------------------------\n");
 
+    for(uint64_t i = 0; i < done_; i++) {
+      RECORD_INFO(4,"%lu\n",ops_latency[i]);
+    }
+
+    delete []ops_latency;
+    ops_latency = nullptr;
+    fflush(stdout);
+  }
     void AddMessage(Slice msg) {
         AppendWithSpace(&message_, msg);
     }
@@ -678,6 +726,7 @@ private:
             arg[0].thread->stats.Merge(arg[i].thread->stats);
         }
         arg[0].thread->stats.Report(name);
+        arg[0].thread->stats.ReportLatency();
 
         for (int i = 0; i < n; i++) {
             delete arg[i].thread;
@@ -843,6 +892,13 @@ private:
         if (ret != 0){
             printf("warn:creat record data pthread fail!%d\n",ret);
         }
+
+        uint64_t l_last_time = Env::Default()->NowMicros();
+        int64_t num_written = 0;
+        if( FLAGS_report_write_latency ){
+        ops_latency = new uint64_t[FLAGS_num];
+        }
+
         for (int i = 0; i < num_; i += entries_per_batch_) {
             batch.Clear();
             for (int j = 0; j < entries_per_batch_; j++) {
@@ -855,6 +911,12 @@ private:
                 share.done_num++;
                 share.done_bytes += value_size_ + strlen(key);
                 thread->stats.FinishedSingleOp();
+                if( FLAGS_report_write_latency ) {
+                    uint64_t l_end_time = Env::Default()->NowMicros();
+                    ops_latency[num_written] = l_end_time - l_last_time;
+                    l_last_time = l_end_time;
+                    num_written++;
+                }
             }
             s = db_->Write(write_options_, &batch);
             if (!s.ok()) {
@@ -1195,7 +1257,9 @@ int main(int argc, char** argv) {
             FLAGS_num_levels = n;
         } else if (sscanf(argv[i], "--num_read_threads=%d%c", &n, &junk) == 1) {
             FLAGS_num_read_threads = n;
-        }
+        }else if (sscanf(argv[i], "--report_write_latency=%d%c", &n, &junk) == 1) {
+            FLAGS_report_write_latency = n;
+        } 
         else {
             fprintf(stderr, "Invalid flag '%s'\n", argv[i]);
             exit(1);

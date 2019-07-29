@@ -15,10 +15,13 @@ nvm_buffer_size="4096"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_
 #bench_benchmarks="fillrandom,stats,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
-bench_benchmarks="fillrandom,stats,sleep20s,clean_cache,stats,readseq,clean_cache,stats,readrandom,stats"
+#bench_benchmarks="fillrandom,stats,sleep20s,clean_cache,stats,readseq,clean_cache,stats,readrandom,stats"
+bench_benchmarks="fillrandom,stats"
 #bench_benchmarks="fillseq,stats"
-bench_num="2000000"
+bench_num="200000"
 bench_readnum="1000000"
+
+report_write_latency="1"
 
 
 bench_file_path="$(dirname $PWD )/out-static/db_bench"
@@ -46,6 +49,7 @@ RUN_ONE_TEST() {
     --db_mem=$bench_mem_path \
     --write_buffer_size=$write_buffer_size \
     --nvm_buffer_size=$nvm_buffer_size \
+    --report_write_latency=$report_write_latency \
     "
     cmd="$bench_file_path $const_params >>out.out 2>&1"
     echo $cmd >out.out
@@ -74,12 +78,13 @@ COPY_OUT_FILE(){
     \cp -f $bench_file_dir/OP_DATA $res_dir/
     \cp -f $bench_file_dir/OP_TIME.csv $res_dir/
     \cp -f $bench_file_dir/out.out $res_dir/
+    \cp -f $bench_file_dir/Latency.csv $res_dir/
 }
 RUN_ALL_TEST() {
     for value in ${value_array[@]}; do
         CLEAN_CACHE
         bench_value="$value"
-        bench_num="`expr $test_all_size / $bench_value`"
+        #bench_num="`expr $test_all_size / $bench_value`"
 
         RUN_ONE_TEST
         if [ $? -ne 0 ];then
