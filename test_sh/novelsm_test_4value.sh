@@ -2,7 +2,7 @@
 
 #value_array=(1024 4096 16384 65536)
 value_array=(4096)
-test_all_size=8192000000   #80G
+test_all_size=81920000000   #80G
 
 
 bench_db_path="/mnt/ssd/ceshi"
@@ -84,7 +84,7 @@ RUN_ALL_TEST() {
     for value in ${value_array[@]}; do
         CLEAN_CACHE
         bench_value="$value"
-        #bench_num="`expr $test_all_size / $bench_value`"
+        bench_num="`expr $test_all_size / $bench_value`"
 
         RUN_ONE_TEST
         if [ $? -ne 0 ];then
