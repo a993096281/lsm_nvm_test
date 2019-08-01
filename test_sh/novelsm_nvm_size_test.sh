@@ -1,8 +1,9 @@
 #! /bin/sh
 
 #value_array=(1024 4096 16384 65536)
-value_array=(4096)
-test_all_size=81920000000   #80G
+#value_array=(4096)
+#test_all_size=81920000000   #80G
+nvm_size_array=(2 4 8 16 32)  #GB
 
 
 bench_db_path="/mnt/ssd/ceshi"
@@ -18,10 +19,11 @@ nvm_buffer_size="4096"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_
 #bench_benchmarks="fillrandom,stats,sleep20s,clean_cache,stats,readseq,clean_cache,stats,readrandom,stats"
 bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readrandom,stats"
 #bench_benchmarks="fillseq,stats"
-bench_num="200000"
+bench_num="20000000"
 bench_readnum="1000000"
 
-report_write_latency="1"
+#report_write_latency="1"
+report_write_latency="0"
 
 
 bench_file_path="$(dirname $PWD )/out-static/db_bench"
@@ -72,19 +74,18 @@ CLEAN_CACHE() {
 
 COPY_OUT_FILE(){
     mkdir $bench_file_dir/result > /dev/null 2>&1
-    res_dir=$bench_file_dir/result/value-$bench_value
+    res_dir=$bench_file_dir/result/nvm-size-$nvm_buffer_size
     mkdir $res_dir > /dev/null 2>&1
     \cp -f $bench_file_dir/compaction.csv $res_dir/
     \cp -f $bench_file_dir/OP_DATA $res_dir/
     \cp -f $bench_file_dir/OP_TIME.csv $res_dir/
     \cp -f $bench_file_dir/out.out $res_dir/
-    \cp -f $bench_file_dir/Latency.csv $res_dir/
+    #\cp -f $bench_file_dir/Latency.csv $res_dir/
 }
 RUN_ALL_TEST() {
-    for value in ${value_array[@]}; do
+    for nvm_size in ${nvm_size_array[@]}; do
         CLEAN_CACHE
-        bench_value="$value"
-        bench_num="`expr $test_all_size / $bench_value`"
+        nvm_buffer_size="`expr $nvm_size / 2 \* 1024`"
 
         RUN_ONE_TEST
         if [ $? -ne 0 ];then
