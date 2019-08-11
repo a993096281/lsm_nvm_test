@@ -26,8 +26,13 @@
 #include <pthread.h>
 
 #include <algorithm>
+#include <queue>
 #include "log/global_statistic.h"
 #include "log/my_log.h"
+#include "util/zipf.h"
+#include "util/rate_limiter.h"
+
+#define REQUEST_QUEUE 1
 
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
@@ -69,11 +74,15 @@ static const char* FLAGS_benchmarks =
         //    "snappyuncomp,"
         //    "acquireload,"
         ;
+//////
+static int FLAGS_request_rate_limit = 20000;   //Number of request IOPS, default 20K iops
+static int FLAGS_per_queue_length = 4;     //Number of per request queue length
+/////
+static bool FLAGS_report_ops_latency = false;
+static bool FLAGS_report_fillrandom_latency = false;
 
-////
-uint64_t *ops_latency = nullptr;
-////
-static bool FLAGS_report_write_latency = false;
+static bool FLAGS_YCSB_uniform_distribution = false;
+static int FLAGS_ycsb_workloada_num = 1000000;
 
 // Number of key/values to place in database
 static int FLAGS_num = 100000;
@@ -228,54 +237,15 @@ public:
         finish_ = Env::Default()->NowMicros();
         seconds_ = (finish_ - start_) * 1e-6;
     }
-    void ReportLatency(){
-    if( !FLAGS_report_write_latency || ops_latency == nullptr) return;
-    std::sort(ops_latency, ops_latency + done_);
-    /* for(uint64_t i = 0; i < done_; i++) {
-      printf("%lu\n",ops_latency[i]);
-    }
-    printf("done:%lu\n",done_); */
-    uint64_t cnt = 0;
-    printf("---------write latency---------\n");
-    cnt = 0.1 * done_;
-    printf("latency: 10%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.2 * done_;
-    printf("latency: 20%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.3 * done_;
-    printf("latency: 30%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.4 * done_;
-    printf("latency: 40%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.5 * done_;
-    printf("latency: 50%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.6 * done_;
-    printf("latency: 60%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.7 * done_;
-    printf("latency: 70%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.8 * done_;
-    printf("latency: 80%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.9 * done_;
-    printf("latency: 90%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.99 * done_;
-    printf("latency: 99%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.999 * done_;
-    printf("latency: 99.9%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.9999 * done_;
-    printf("latency: 99.99%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    cnt = 0.99999 * done_;
-    printf("latency: 99.999%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
-    printf("-------------------------------\n");
 
-    for(uint64_t i = 0; i < done_; i++) {
-      RECORD_INFO(4,"%lu\n",ops_latency[i]);
-    }
-
-    delete []ops_latency;
-    ops_latency = nullptr;
-    fflush(stdout);
-  }
     void AddMessage(Slice msg) {
         AppendWithSpace(&message_, msg);
     }
+
+    void ResetLastOpTime() {
+    // Set to now to avoid latency from calls to SleepForMicroseconds
+    last_op_finish_ = Env::Default()->NowMicros();
+  }
 
     void FinishedSingleOp() {
         if (FLAGS_histogram) {
@@ -325,10 +295,13 @@ public:
             extra = rate;
         }
         AppendWithSpace(&extra, message_);
+        double elapsed = (finish_ - start_) * 1e-6;
+        double throughput = (double)done_/elapsed;
 
-        fprintf(stdout, "%-12s : %11.3f micros/op;%s%s %.2f s\n",
+        fprintf(stdout, "%-12s : %11.3f micros/op; %ld ops/sec; %s%s %.2f s\n",
                 name.ToString().c_str(),
                 seconds_ * 1e6 / done_,
+                (long)throughput,
                 (extra.empty() ? "" : " "),
                 extra.c_str(),seconds_);
         if (FLAGS_histogram) {
@@ -337,7 +310,98 @@ public:
         fflush(stdout);
     }
 };
+struct Latency {
+  uint64_t stay_queue_time = 0;    //Microsecond
+  uint64_t execute_time = 0;      //Microsecond
+};
+bool CmpLatency(Latency x,Latency y) {
+  return ( x.stay_queue_time + x.execute_time ) < ( y.stay_queue_time + y.execute_time );
+}
+uint64_t AllLatency(Latency x) {
+  return ( x.stay_queue_time + x.execute_time );
+}
+void ReportLatency(Latency *ops_latency, uint64_t num) {
+    if( ops_latency == nullptr || num < 10 ) return;
+    std::sort(ops_latency, ops_latency + num, CmpLatency);
+    /* for(uint64_t i = 0; i < num; i++) {
+      printf("%lu\n",ops_latency[i]);
+    }
+    printf("done:%lu\n",num); */
+    uint64_t cnt = 0;
+    printf("---------write latency---------\n");
+    cnt = 0.1 * num;
+    printf("latency: 10%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.2 * num;
+    printf("latency: 20%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.3 * num;
+    printf("latency: 30%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.4 * num;
+    printf("latency: 40%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.5 * num;
+    printf("latency: 50%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.6 * num;
+    printf("latency: 60%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.7 * num;
+    printf("latency: 70%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.8 * num;
+    printf("latency: 80%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.9 * num;
+    printf("latency: 90%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.99 * num;
+    printf("latency: 99%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.999 * num;
+    printf("latency: 99.9%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.9999 * num;
+    printf("latency: 99.99%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    cnt = 0.99999 * num;
+    printf("latency: 99.999%%th(%lu) = [%lu us]\n", cnt, AllLatency(ops_latency[cnt - 1]));
+    printf("-------------------------------\n");
 
+    for(uint64_t i = 0; i < num; i++) {
+      RECORD_INFO(4,"%lu,%lu,%lu\n",AllLatency(ops_latency[i]),ops_latency[i].stay_queue_time,ops_latency[i].execute_time);
+    }
+}
+void ReportLatency2(uint64_t *ops_latency, uint64_t num) {
+    if( ops_latency == nullptr || num < 10 ) return;
+    std::sort(ops_latency, ops_latency + num);
+    /* for(uint64_t i = 0; i < num; i++) {
+      printf("%lu\n",ops_latency[i]);
+    }
+    printf("done:%lu\n",num); */
+    uint64_t cnt = 0;
+    printf("---------write latency---------\n");
+    cnt = 0.1 * num;
+    printf("latency: 10%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.2 * num;
+    printf("latency: 20%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.3 * num;
+    printf("latency: 30%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.4 * num;
+    printf("latency: 40%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.5 * num;
+    printf("latency: 50%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.6 * num;
+    printf("latency: 60%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.7 * num;
+    printf("latency: 70%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.8 * num;
+    printf("latency: 80%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.9 * num;
+    printf("latency: 90%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.99 * num;
+    printf("latency: 99%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.999 * num;
+    printf("latency: 99.9%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.9999 * num;
+    printf("latency: 99.99%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    cnt = 0.99999 * num;
+    printf("latency: 99.999%%th(%lu) = [%lu us]\n", cnt, ops_latency[cnt - 1]);
+    printf("-------------------------------\n");
+
+    for(uint64_t i = 0; i < num; i++) {
+      RECORD_INFO(4,"%lu\n",ops_latency[i]);
+    }
+}
 // State shared by all concurrent executions of the same benchmark.
 struct SharedState {
     port::Mutex mu;
@@ -353,6 +417,28 @@ struct SharedState {
     int num_initialized;
     int num_done;
     bool start;
+
+////for fillrandomcontrolrequest
+  port::Mutex queue_mu[REQUEST_QUEUE];   //mutex of op_queues
+  std::queue<uint64_t> op_queues[REQUEST_QUEUE];  // request queue, save the time to join the queue
+  
+  uint64_t request_num = 0;
+  //std::shared_ptr<RateLimiter> request_rate_limiter;
+
+  port::Mutex latency_mu;   //mutex of ops_latency, last_second_op, ops_done
+  Latency *ops_latency = nullptr;  //all ops latency;
+  //uint64_t last_second_op = 0;   //last second op
+  uint64_t ops_done = 0; //
+
+/////
+//////for report_ops_latency && ( fillrandom )
+    port::Mutex latencys_mutex;
+    uint64_t *latencys = nullptr;
+    uint64_t ops_num = 0;
+    uint64_t ops_bytes = 0;
+
+//////
+
 
     SharedState() : cv(&mu) { }
 };
@@ -573,6 +659,11 @@ public:
             } else if (name == Slice("fillrandom")) {
                 fresh_db = true;
                 method = &Benchmark::WriteRandom;
+            } else if (name == "fillrandomcontrolrequest") {  //////add 
+                fresh_db = true;
+                method = &Benchmark::FillRandomControlRequest;
+            } else if (name == "ycsbwklda") {
+                method = &Benchmark::YCSBWorkloadA;    /////
             } else if (name == Slice("overwrite")) {
                 fresh_db = false;
                 method = &Benchmark::WriteRandom;
@@ -699,6 +790,20 @@ private:
         shared.num_done = 0;
         shared.start = false;
 
+        if (method == &Benchmark::FillRandomControlRequest ) {
+        shared.ops_latency = new Latency[FLAGS_num];
+        
+        }
+        if ( FLAGS_report_fillrandom_latency && method == &Benchmark::WriteRandom) {
+        shared.latencys = new uint64_t[FLAGS_num * n];
+        }
+        //if ( FLAGS_report_ops_latency && ( method == &Benchmark::WriteRandom || method == &Benchmark::YCSBWorkloadA)) {
+        if ( FLAGS_report_ops_latency && (method == &Benchmark::YCSBWorkloadA)) {
+        shared.latencys = new uint64_t[FLAGS_ycsb_workloada_num * n];
+        n = n + 1;
+        shared.total = n;  //need extra thread to record latency and throughput per second
+        }
+
         ThreadArg* arg = new ThreadArg[n];
         for (int i = 0; i < n; i++) {
             arg[i].bm = this;
@@ -726,7 +831,23 @@ private:
             arg[0].thread->stats.Merge(arg[i].thread->stats);
         }
         arg[0].thread->stats.Report(name);
-        arg[0].thread->stats.ReportLatency();
+        ReportLatency(shared.ops_latency, shared.ops_done);
+        ReportLatency2(shared.latencys, shared.ops_num);
+
+        if (method == &Benchmark::FillRandomControlRequest ) {
+          delete[] shared.ops_latency;
+          shared.ops_latency = nullptr;
+        }
+
+        if ( FLAGS_report_fillrandom_latency && method == &Benchmark::WriteRandom) {
+          delete[] shared.latencys;
+          shared.latencys = nullptr;
+        }
+        //if ( FLAGS_report_ops_latency && ( method == &Benchmark::WriteRandom || method == &Benchmark::YCSBWorkloadA)) {
+        if ( FLAGS_report_ops_latency && (method == &Benchmark::YCSBWorkloadA)) {
+          delete[] shared.latencys;
+          shared.latencys = nullptr;
+        }
 
         for (int i = 0; i < n; i++) {
             delete arg[i].thread;
@@ -893,14 +1014,15 @@ private:
             printf("warn:creat record data pthread fail!%d\n",ret);
         }
 
-        uint64_t l_last_time = Env::Default()->NowMicros();
-        int64_t num_written = 0;
-        if( FLAGS_report_write_latency ){
-        ops_latency = new uint64_t[FLAGS_num];
-        }
+        uint64_t per_write_start_time = 0;
 
         for (int i = 0; i < num_; i += entries_per_batch_) {
             batch.Clear();
+
+            if (FLAGS_report_fillrandom_latency) {   //entries_per_batch_ need equal 1
+                per_write_start_time = Env::Default()->NowMicros();
+            }
+
             for (int j = 0; j < entries_per_batch_; j++) {
                 const int k = seq ? i+j : (thread->rand.Next() % FLAGS_num);
                 char key[100];
@@ -911,17 +1033,20 @@ private:
                 share.done_num++;
                 share.done_bytes += value_size_ + strlen(key);
                 thread->stats.FinishedSingleOp();
-                if( FLAGS_report_write_latency ) {
-                    uint64_t l_end_time = Env::Default()->NowMicros();
-                    ops_latency[num_written] = l_end_time - l_last_time;
-                    l_last_time = l_end_time;
-                    num_written++;
-                }
+                
             }
             s = db_->Write(write_options_, &batch);
             if (!s.ok()) {
                 fprintf(stderr, "put error: %s\n", s.ToString().c_str());
                 exit(1);
+            }
+            if (FLAGS_report_fillrandom_latency) {   //entries_per_batch_ need equal 1
+
+                thread->shared->latencys_mutex.Lock();
+                thread->shared->latencys[thread->shared->ops_num] = Env::Default()->NowMicros() - per_write_start_time;
+                thread->shared->ops_num++;
+                thread->shared->ops_bytes += (value_size_ + 16);
+                thread->shared->latencys_mutex.Unlock();
             }
 
 #if defined(_SIMULATE_FAILURE)
@@ -959,7 +1084,355 @@ private:
         share.shutdown = true;
         pthread_join(pt, NULL);
     }
+/////
+// Thread 0 -- record latency and throughput per second
+// Thread 1 -- the workload threads. Control request speed and push request to queues
+// Thread REQUEST_QUEUE 2 ~ REQUEST_QUEUE -- pop request from queues and put in db
+  void FillRandomControlRequest(ThreadState* thread) {
+    if( thread->shared->total < REQUEST_QUEUE + 2 ) {
+      printf("Error:Test FillRandomControlRequest need %d threads\n",REQUEST_QUEUE + 2);
+      return;
+    }
+    if( thread->tid == 0 ) {  //record latency and throughput per second
+      uint64_t start_time = Env::Default()->NowMicros();
+      uint64_t last_ops = 0;
+      uint64_t last_time = start_time;
+      uint64_t now_done = 0;
+      uint64_t per_second_done;
+      uint64_t now_time;
+      uint64_t last_request_num = 0;
+      uint64_t now_request_num;
+      while(true) {
+        if( thread->shared->num_done >= thread->shared->total - 1 ) break;
+        sleep(1);
+        
+        now_time = Env::Default()->NowMicros();
+        thread->shared->latency_mu.Lock();
+        now_done = thread->shared->ops_done;
+        thread->shared->latency_mu.Unlock();
 
+        now_request_num = thread->shared->request_num;
+
+        per_second_done = now_done - last_ops;
+        double use_time = (now_time - last_time)*1e-6;
+        int64_t ebytes = (value_size_ + 16) * per_second_done;
+        int64_t now_bytes = (value_size_ + 16) * now_done;
+        double now = (now_time - start_time)*1e-6;
+        uint64_t e_request_num = now_request_num - last_request_num;
+
+        RECORD_INFO(1,"now=,%.2f,s speed=,%.2f,MB/s,%.1f,iops size=,%.1f,MB average=,%.2f,MB/s,%.1f,iops request_num,%lu,queue_size,%lu,\n",
+                    now,(1.0*ebytes/1048576.0)/use_time,1.0*per_second_done/use_time,1.0*now_bytes/1048576.0,(1.0*now_bytes/1048576.0)/now,1.0*now_done/now,e_request_num,
+                    thread->shared->op_queues[0].size());
+        
+        Latency *ops_latency = thread->shared->ops_latency;
+        std::sort(ops_latency + last_ops, ops_latency + now_done, CmpLatency);
+        /* for(uint64_t i = last_ops; i < now_done; i++) {
+          printf("%lu,%lu,%lu,%lu\n",i,ops_latency[i].stay_queue_time,ops_latency[i].execute_time,ops_latency[i].stay_queue_time + ops_latency[i].execute_time);
+        } */
+        if (per_second_done > 2) {
+          uint64_t cnt90 = 0.90 * per_second_done - 1 + last_ops;
+          uint64_t cnt99 = 0.99 * per_second_done - 1 + last_ops;
+          uint64_t cnt999 = 0.999 * per_second_done - 1 + last_ops;
+          uint64_t cnt9999 = 0.9999 * per_second_done - 1 + last_ops;
+          uint64_t cnt99999 = 0.99999 * per_second_done - 1 + last_ops;
+
+          //printf("per_second_done:%lu,last_ops:%lu,cnt90:%lu,cnt99:%lu,%lu,%lu,%lu\n",per_second_done,last_ops,cnt90,cnt99,cnt999,cnt9999,cnt99999);
+
+          RECORD_INFO(5,"%.2f,%.1f,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+                    now,1.0*per_second_done/use_time,
+                    AllLatency(ops_latency[cnt90]),ops_latency[cnt90].stay_queue_time,ops_latency[cnt90].execute_time,
+                    AllLatency(ops_latency[cnt99]),ops_latency[cnt99].stay_queue_time,ops_latency[cnt99].execute_time,
+                    AllLatency(ops_latency[cnt999]),ops_latency[cnt999].stay_queue_time,ops_latency[cnt999].execute_time,
+                    AllLatency(ops_latency[cnt9999]),ops_latency[cnt9999].stay_queue_time,ops_latency[cnt9999].execute_time,
+                    AllLatency(ops_latency[cnt99999]),ops_latency[cnt99999].stay_queue_time,ops_latency[cnt99999].execute_time);
+        }
+        
+
+        last_ops = now_done;
+        last_time = now_time;
+        last_request_num = now_request_num;
+        //thread->shared->last_second_op = thread->shared->done;
+
+        
+      }
+
+    }
+    else if( thread->tid == 1 ) {  //push request to queues
+      int64_t num = FLAGS_num;
+      int64_t done = 0;
+
+      int queue_index = 0;
+      bool push_ok = false;
+
+      RateLimiter* request_rate_limiter = nullptr;
+      if(FLAGS_request_rate_limit > 0 ) {
+        request_rate_limiter = NewGenericRateLimiter(FLAGS_request_rate_limit);
+      }
+      
+
+      while(done < num) {
+
+        thread->shared->queue_mu[queue_index].Lock();
+        if(thread->shared->op_queues[queue_index].size() < FLAGS_per_queue_length ) {
+          thread->shared->op_queues[queue_index].push(Env::Default()->NowMicros());
+          push_ok = true;
+        }
+        thread->shared->queue_mu[queue_index].Unlock();
+        if(push_ok == true) {
+          done++;
+          thread->shared->request_num++;
+          push_ok = false;
+          if(FLAGS_request_rate_limit > 0 ) {
+            request_rate_limiter->Request(1, IO_HIGH, nullptr /* stats */, RateLimiter::OpType::kWrite);
+          }
+        }
+        queue_index = (queue_index + 1) % REQUEST_QUEUE;
+        //uint64_t sleep_time = 1000000/FLAGS_request_rate_limit;
+        //printf("sleep_time:%lu\n",sleep_time);
+        //uint64_t st = FLAGS_env->NowMicros();
+        //usleep(sleep_time); //control requst,
+        //uint64_t et = FLAGS_env->NowMicros();
+        //printf("sleep_time:%lu\n",et - st);
+      }
+      if(request_rate_limiter != nullptr){
+        delete request_rate_limiter;
+      }
+      
+    }
+    else if ( thread->tid > 1 ) { //Put db
+      int64_t num = FLAGS_num / (thread->shared->total - 2);
+      int64_t done = 0;
+
+      ReadOptions options;
+      RandomGenerator gen;
+      init_zipf_generator(0, FLAGS_num);
+    
+      std::string value;
+      char key[100];
+
+      int64_t reads_done = 0;
+      int64_t writes_done = 0;
+      int64_t found = 0;
+
+      while(done < num) {
+
+        thread->shared->queue_mu[thread->tid - 2 ].Lock();
+        if(!thread->shared->op_queues[thread->tid - 2 ].empty()){
+          uint64_t add_to_queue_micro = thread->shared->op_queues[thread->tid - 2 ].front();
+          thread->shared->op_queues[thread->tid - 2 ].pop();
+          thread->shared->queue_mu[thread->tid - 2 ].Unlock();
+          uint64_t pop_from_queue_micro = Env::Default()->NowMicros();
+
+          thread->stats.ResetLastOpTime();
+
+
+
+          long k;
+          if (FLAGS_YCSB_uniform_distribution){
+            //Generate number from uniform distribution            
+            k = thread->rand.Next() % FLAGS_num;
+          } else { //default
+            //Generate number from zipf distribution
+            k = nextValue() % FLAGS_num;            
+          }
+          snprintf(key, sizeof(key), "%016d", k);
+
+          int next_op = thread->rand.Next() % 100;
+          if (next_op < 50){
+            //read
+            Status s = db_->Get(options, key, &value);
+            if (!s.ok() && !s.IsNotFound()) {
+              fprintf(stderr, "k=%ld; get error: %s\n", k, s.ToString().c_str());
+        
+            } else if (!s.IsNotFound()) {
+              found++;
+              //thread->stats.FinishedSingleOp();
+            }
+            thread->stats.FinishedSingleOp();  //not found is normal operation
+            reads_done++;
+            
+          } else{
+
+            Status s = db_->Put(write_options_, key, gen.Generate(value_size_));
+            if (!s.ok()) {
+              fprintf(stderr, "put error: %s\n", s.ToString().c_str());
+              //exit(1);
+            } else{
+              writes_done++;
+              thread->stats.FinishedSingleOp();
+            }                
+          }
+
+          
+          done++;
+          uint64_t done_micro = Env::Default()->NowMicros();
+          thread->shared->latency_mu.Lock();
+          thread->shared->ops_latency[thread->shared->ops_done].stay_queue_time = pop_from_queue_micro - add_to_queue_micro;
+          thread->shared->ops_latency[thread->shared->ops_done].execute_time = done_micro - pop_from_queue_micro;
+          thread->shared->ops_done++;
+          thread->shared->latency_mu.Unlock();
+
+        }
+        else{
+          thread->shared->queue_mu[thread->tid - 2 ].Unlock();
+          //usleep(2);
+        }
+      }
+      char msg[200];
+      snprintf(msg, sizeof(msg), "(thread id:%d reads:%ld writes:%ld \
+              total:%ld found:%ld )", \
+              thread->tid, reads_done, writes_done, done, found);
+      thread->stats.AddMessage(msg);
+      //thread->stats.AddBytes(bytes);
+
+    }
+  }
+// Workload A: Update heavy workload
+  // This workload has a mix of 50/50 reads and writes. 
+  // An application example is a session store recording recent actions.
+  // Read/update ratio: 50/50
+  // Default data size: 1 KB records 
+  // Request distribution: zipfian
+  void YCSBWorkloadA(ThreadState* thread) {
+    if( thread->tid == thread->shared->total - 1 ) {  //record latency and throughput per second
+      uint64_t start_time = Env::Default()->NowMicros();
+      uint64_t last_ops = 0;
+      uint64_t last_time = start_time;
+      uint64_t now_done = 0;
+      uint64_t per_second_done;
+      uint64_t now_time;
+      
+      while(true) {
+        if( thread->shared->num_done >= thread->shared->total - 1 ) break;
+        sleep(1);
+        
+        now_time = Env::Default()->NowMicros();
+        thread->shared->latencys_mutex.Lock();
+        now_done = thread->shared->ops_num;
+        thread->shared->latencys_mutex.Unlock();
+
+        per_second_done = now_done - last_ops;
+        double use_time = (now_time - last_time)*1e-6;
+        int64_t ebytes = (value_size_ + 16) * per_second_done;
+        int64_t now_bytes = (value_size_ + 16) * now_done;
+        double now = (now_time - start_time)*1e-6;
+
+        RECORD_INFO(1,"now=,%.2f,s speed=,%.2f,MB/s,%.1f,iops size=,%.1f,MB average=,%.2f,MB/s,%.1f,iops ,\n",
+                    now,(1.0*ebytes/1048576.0)/use_time,1.0*per_second_done/use_time,1.0*now_bytes/1048576.0,(1.0*now_bytes/1048576.0)/now,1.0*now_done/now);
+        
+        uint64_t *ops_latency = thread->shared->latencys;
+        std::sort(ops_latency + last_ops, ops_latency + now_done);
+        /* for(uint64_t i = last_ops; i < now_done; i++) {
+          printf("%lu,%lu,%lu,%lu\n",i,ops_latency[i].stay_queue_time,ops_latency[i].execute_time,ops_latency[i].stay_queue_time + ops_latency[i].execute_time);
+        } */
+        if (per_second_done > 2) {
+          uint64_t cnt90 = 0.90 * per_second_done - 1 + last_ops;
+          uint64_t cnt99 = 0.99 * per_second_done - 1 + last_ops;
+          uint64_t cnt999 = 0.999 * per_second_done - 1 + last_ops;
+          uint64_t cnt9999 = 0.9999 * per_second_done - 1 + last_ops;
+          uint64_t cnt99999 = 0.99999 * per_second_done - 1 + last_ops;
+
+          //printf("per_second_done:%lu,last_ops:%lu,cnt90:%lu,cnt99:%lu,%lu,%lu,%lu\n",per_second_done,last_ops,cnt90,cnt99,cnt999,cnt9999,cnt99999);
+
+          RECORD_INFO(5,"%.2f,%.1f,%lu,,,%lu,,,%lu,,,%lu,,,%lu,,,\n",
+                    now,1.0*per_second_done/use_time,
+                    ops_latency[cnt90],
+                    ops_latency[cnt99],
+                    ops_latency[cnt999],
+                    ops_latency[cnt9999],
+                    ops_latency[cnt99999]);
+        }
+        
+
+        last_ops = now_done;
+        last_time = now_time;
+
+      }
+    return;
+    }
+
+    ReadOptions options;
+    RandomGenerator gen;
+    
+    init_zipf_generator(0, FLAGS_num);
+    
+    std::string value;
+    int64_t found = 0;
+    uint64_t per_op_start_time = 0;
+
+    int64_t reads_done = 0;
+    int64_t writes_done = 0;
+    int done_ = 0;
+    
+    char key[100];
+    
+    // the number of iterations is the larger of read_ or write_
+    while (done_ < FLAGS_ycsb_workloada_num) {
+       
+      long k;
+      if (FLAGS_YCSB_uniform_distribution){
+        //Generate number from uniform distribution            
+        k = thread->rand.Next() % FLAGS_num;
+      } else { //default
+        //Generate number from zipf distribution
+        k = nextValue() % FLAGS_num;            
+      }
+      snprintf(key, sizeof(key), "%016d", k);
+
+      if (FLAGS_report_ops_latency) {   //
+        per_op_start_time = Env::Default()->NowMicros();
+      }
+
+      int next_op = thread->rand.Next() % 100;
+      if (next_op < 50){
+        //read
+        Status s = db_->Get(options, key, &value);
+        if (!s.ok() && !s.IsNotFound()) {
+          fprintf(stderr, "k=%ld; get error: %s\n", k, s.ToString().c_str());
+          //exit(1);
+          // we continue after error rather than exiting so that we can
+          // find more errors if any
+        } else if (!s.IsNotFound()) {
+          found++;
+          //thread->stats.FinishedSingleOp();
+        }
+        thread->stats.FinishedSingleOp();  //not found is normal operation
+        reads_done++;
+        
+      } else{
+        //write
+
+        if (FLAGS_report_ops_latency) {   //
+          per_op_start_time = Env::Default()->NowMicros();
+        }
+
+        Status s = db_->Put(write_options_, key, gen.Generate(value_size_));
+        if (!s.ok()) {
+          fprintf(stderr, "put error: %s\n", s.ToString().c_str());
+          //exit(1);
+        } else{
+          writes_done++;
+          thread->stats.FinishedSingleOp();
+        }                
+      }
+        done_++;
+      if (FLAGS_report_ops_latency) {   //
+
+        thread->shared->latencys_mutex.Lock();
+        thread->shared->latencys[thread->shared->ops_num] = Env::Default()->NowMicros() - per_op_start_time;
+        thread->shared->ops_num++;
+        thread->shared->latencys_mutex.Unlock();
+      }
+
+    } 
+    char msg[100];
+    snprintf(msg, sizeof(msg), "( reads:%ld writes:%ld total:%ld found:%ld )",
+             reads_done, writes_done, FLAGS_ycsb_workloada_num, found);
+    thread->stats.AddMessage(msg);
+  }
+
+
+/////
     void ReadSequential(ThreadState* thread) {
         Iterator* iter = db_->NewIterator(ReadOptions());
         int i = 0;
@@ -1257,8 +1730,18 @@ int main(int argc, char** argv) {
             FLAGS_num_levels = n;
         } else if (sscanf(argv[i], "--num_read_threads=%d%c", &n, &junk) == 1) {
             FLAGS_num_read_threads = n;
-        }else if (sscanf(argv[i], "--report_write_latency=%d%c", &n, &junk) == 1) {
-            FLAGS_report_write_latency = n;
+        } else if (sscanf(argv[i], "--request_rate_limit=%d%c", &n, &junk) == 1) {
+            FLAGS_request_rate_limit = n;
+        } else if (sscanf(argv[i], "--per_queue_length=%d%c", &n, &junk) == 1) {
+            FLAGS_per_queue_length = n;
+        } else if (sscanf(argv[i], "--report_ops_latency=%d%c", &n, &junk) == 1) {
+            FLAGS_report_ops_latency = n;
+        } else if (sscanf(argv[i], "--report_fillrandom_latency=%d%c", &n, &junk) == 1) {
+            FLAGS_report_fillrandom_latency = n;
+        } else if (sscanf(argv[i], "--YCSB_uniform_distribution=%d%c", &n, &junk) == 1) {
+            FLAGS_YCSB_uniform_distribution = n;
+        } else if (sscanf(argv[i], "--ycsb_workloada_num=%d%c", &n, &junk) == 1) {
+            FLAGS_ycsb_workloada_num = n;
         } 
         else {
             fprintf(stderr, "Invalid flag '%s'\n", argv[i]);

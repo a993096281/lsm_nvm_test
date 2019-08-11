@@ -32,7 +32,26 @@ CondVar::CondVar(Mutex* mu)
 }
 
 CondVar::~CondVar() { PthreadCall("destroy cv", pthread_cond_destroy(&cv_)); }
+bool CondVar::TimedWait(uint64_t abs_time_us) {
+  struct timespec ts;
+  ts.tv_sec = static_cast<time_t>(abs_time_us / 1000000);
+  ts.tv_nsec = static_cast<suseconds_t>((abs_time_us % 1000000) * 1000);
 
+#ifndef NDEBUG
+  mu_->locked_ = false;
+#endif
+  int err = pthread_cond_timedwait(&cv_, &mu_->mu_, &ts);
+#ifndef NDEBUG
+  mu_->locked_ = true;
+#endif
+  if (err == ETIMEDOUT) {
+    return true;
+  }
+  if (err != 0) {
+    PthreadCall("timedwait", err);
+  }
+  return false;
+}
 void CondVar::Wait() {
   PthreadCall("wait", pthread_cond_wait(&cv_, &mu_->mu_));
 }

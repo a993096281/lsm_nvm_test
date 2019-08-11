@@ -102,6 +102,7 @@ class CondVar {
   explicit CondVar(Mutex* mu);
   ~CondVar();
   void Wait();
+  bool TimedWait(uint64_t abs_time_us);
   void Signal();
   void SignalAll();
  private:
