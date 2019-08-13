@@ -23,7 +23,6 @@ bench_readnum="1000000"
 
 #report_fillrandom_latency="1"
 report_fillrandom_latency="0"
-cache_size="`expr 4 \* 1024 \* 1024 \* 1024`"  #4G
 
 
 bench_file_path="$(dirname $PWD )/out-static/db_bench"
@@ -52,7 +51,6 @@ RUN_ONE_TEST() {
     --write_buffer_size=$write_buffer_size \
     --nvm_buffer_size=$nvm_buffer_size \
     --report_fillrandom_latency=$report_fillrandom_latency \
-    --cache_size=$cache_size \
     "
     cmd="$bench_file_path $const_params >>out.out 2>&1"
     echo $cmd >out.out
