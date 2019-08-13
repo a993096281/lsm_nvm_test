@@ -3,7 +3,6 @@
 #value_array=(1024 4096 16384 65536)
 value_array=(4096)
 test_all_size=81920000000   #80G
-#test_all_size=800000000   #80G
 
 bench_db_path="/mnt/ssd/ceshi"
 bench_mem_path="/pmem/nvm"
@@ -17,13 +16,14 @@ nvm_buffer_size="4096"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_
 #bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,sleep20s,clean_cache,stats,readseq,clean_cache,stats,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readrandom,stats"
-bench_benchmarks="fillrandom,stats,wait,stats,readrandom,stats"
+bench_benchmarks="fillrandom,stats,wait,stats,readrandom,stats,readrandom,stats"
 #bench_benchmarks="fillseq,stats"
 bench_num="200000"
 bench_readnum="1000000"
 
 #report_fillrandom_latency="1"
 report_fillrandom_latency="0"
+cache_size="`expr 4 \* 1024 \* 1024 \* 1024`"  #4G
 
 
 bench_file_path="$(dirname $PWD )/out-static/db_bench"
@@ -52,6 +52,7 @@ RUN_ONE_TEST() {
     --write_buffer_size=$write_buffer_size \
     --nvm_buffer_size=$nvm_buffer_size \
     --report_fillrandom_latency=$report_fillrandom_latency \
+    --cache_size=$cache_size \
     "
     cmd="$bench_file_path $const_params >>out.out 2>&1"
     echo $cmd >out.out
