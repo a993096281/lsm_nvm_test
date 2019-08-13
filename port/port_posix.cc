@@ -37,13 +37,9 @@ bool CondVar::TimedWait(uint64_t abs_time_us) {
   ts.tv_sec = static_cast<time_t>(abs_time_us / 1000000);
   ts.tv_nsec = static_cast<suseconds_t>((abs_time_us % 1000000) * 1000);
 
-#ifndef NDEBUG
-  mu_->locked_ = false;
-#endif
+
   int err = pthread_cond_timedwait(&cv_, &mu_->mu_, &ts);
-#ifndef NDEBUG
-  mu_->locked_ = true;
-#endif
+
   if (err == ETIMEDOUT) {
     return true;
   }

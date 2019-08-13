@@ -21,7 +21,7 @@ bench_benchmarks="fillrandom,stats"
 bench_num="200000"
 bench_readnum="1000000"
 
-report_write_latency="1"
+report_fillrandom_latency="1"
 
 
 bench_file_path="$(dirname $PWD )/out-static/db_bench"
@@ -49,7 +49,7 @@ RUN_ONE_TEST() {
     --db_mem=$bench_mem_path \
     --write_buffer_size=$write_buffer_size \
     --nvm_buffer_size=$nvm_buffer_size \
-    --report_write_latency=$report_write_latency \
+    --report_fillrandom_latency=$report_fillrandom_latency \
     "
     cmd="numactl -N 1 -m 1 $bench_file_path $const_params >>out.out 2>&1"
     echo $cmd >out.out

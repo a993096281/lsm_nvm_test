@@ -33,13 +33,6 @@ class Env {
   Env() { }
   virtual ~Env();
 
-enum IOPriority {
-    IO_LOW = 0,
-    IO_HIGH = 1,
-    IO_TOTAL = 2
-};
-
-
   // Return a default environment suitable for the current operating
   // system.  Sophisticated users may wish to provide their own Env
   // implementation instead of relying on this default environment.
