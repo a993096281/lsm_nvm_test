@@ -1,11 +1,11 @@
 #! /bin/sh
 
 #value_array=(1024 4096 16384 65536)
-value_array=(4096)
+value_array=(256)
 test_all_size=81920000000   #80G
 
-bench_db_path="/mnt/ssd/ceshi"
-bench_mem_path="/pmem/nvm"
+bench_db_path="/home/lzw/ceshi"
+bench_mem_path="/mnt/pmem1/nvm"
 bench_value="4096"
 write_buffer_size="64"  #unit：MB
 nvm_buffer_size="4096"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_size*1.5*1.5 ? 4G*1.5*1.5=9G
@@ -13,10 +13,10 @@ nvm_buffer_size="4096"  #unit：MB; memtable -> immutable ; allocate nvm_buffer_
 #bench_benchmarks="fillseq,stats,readseq,readrandom,stats" #"fillrandom,fillseq,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,readseq,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,stats,readseq,readrandom,readrandom,readrandom,stats"
-#bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
+bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readseq,clean_cache,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,sleep20s,clean_cache,stats,readseq,clean_cache,stats,readrandom,stats"
 #bench_benchmarks="fillrandom,stats,wait,clean_cache,stats,readrandom,stats"
-bench_benchmarks="fillrandom,stats,wait,stats,readrandom,stats,readrandom,stats"
+#bench_benchmarks="fillrandom,stats,wait,stats,readrandom,stats,readrandom,stats"
 #bench_benchmarks="fillseq,stats"
 bench_num="200000"
 bench_readnum="1000000"
